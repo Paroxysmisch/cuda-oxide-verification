@@ -497,14 +497,74 @@ pipeline, **successfully, producing real PTX** (`verify_demo.ptx`,
   these annotations cost nothing at runtime and touch nothing downstream
   of erasure.
 
-**What this does not yet close**: feeding this *exact* real dump through
-the Phase 2 translator + Silicon. Real `rustc` MIR is far more verbose
-than the hand-built IR Phases 1-4 use -- many more blocks (one rustc
-local per sub-expression), `mir.ref`, multiple pointer-kind casts
-(`RawConst`/`RawMut`/`UniqueRef`/`SharedRef`) the translator doesn't
-handle yet. Extending the translator to that real op surface is further
-work, not attempted in this pass -- correctly scoping that extension
-matters more than rushing it.
+## Closing the loop for real: the real compiled kernel, through the real translator, into Silicon
+
+The gap above is now closed. `dialect-verify::translate` (ported from
+`dialect-verify-poc/`'s standalone prototype into the real submodule
+crate, alongside the real ops) walks **actual compiler-produced
+`dialect-mir`** -- not hand-built IR -- and `mir-importer`'s pipeline
+gained a debug hook (`CUDA_OXIDE_VERIFY_EMIT_VPR=<dir>`, panic-isolated
+so a translator bug can never break a real build) that runs it on any
+function containing a `verify.*` op, right before that function's ghost
+ops are erased, and writes the translated body to disk.
+
+Getting `verify_demo`'s real compiled `block_reduce` through this
+surfaced real bugs no hand-built example had exercised, each found by
+actually running it and reading what Silicon (or the translator itself)
+said:
+- `mir.ptr_offset` on a non-tile base (e.g. indexing the kernel's
+  ordinary `&[f32]` parameter) must not panic -- only a tile base
+  resolves to a `cells[...]` index; anything else is just an opaque
+  pointer, same as `mir.load`/`mir.store`'s existing fallback.
+- Real compiled if/else and loop-body-merge detection can't assume one
+  hop: rustc emits one basic block per statement boundary, so an arm's
+  own goto target is routinely several blocks short of where it
+  actually reconverges. Fixed by chasing the whole chain of
+  plain-goto-only blocks, not just the first one.
+- A real loop's invariant/permission annotations sit as the first
+  statement(s) of the loop **body** (mirroring the source --
+  `while cond { verify_invariant!(...); ... }`), not in the header block
+  that merely tests `cond`. `translate_block` now returns every
+  invariant discovered anywhere in a loop's body subtree, propagated up
+  to the enclosing `while` -- not silently empty, which Silicon doesn't
+  flag as an error, just proves a weaker (often vacuous) claim.
+- A real pointer or comparison result gets routed through its own
+  alloca'd stack slot (store once, load repeatedly) just as often as
+  kept in one SSA value. Both tile-recognition and inlined expression
+  text now propagate through that round-trip, and anything learned from
+  the function's skipped prefix (e.g. `stride`'s own `= 4` initializer)
+  is explicitly cleared before real translation starts -- a stale
+  initial-value fact is exactly the already-fixed-once havoc-correlation
+  bug, reappearing through a new path.
+- A real compiled local can be `bool` (a width-1 integer) as easily as a
+  real `Int`; declaring every local `Int` regardless is a genuine Viper
+  type error the moment one is used in boolean position.
+
+With all of that fixed: `verify_demo`'s compiled `block_reduce`,
+wrapped with its real signature (`viper-poc/real_compiler_block_reduce.vpr`
+-- the tile/thread-index parameters are *bridged* in by hand, matching
+the established "the caller states the method signature" scope; the
+body itself is 100% translator output, untouched), **verifies with
+Silicon**. `verify_demo_broken` (one deliberate off-by-one --
+`TILE[tid + stride + 1]`) is correctly **rejected**, with a diagnostic
+naming the exact out-of-bounds index
+(`viper-poc/real_compiler_block_reduce_broken.vpr`).
+
+This is the real, complete loop: Rust source with `verify_*!` macros →
+real `rustc` → real `mir-importer` dispatch → real ghost ops → real
+translator → real Viper → real Silicon/Z3 → a genuine pass, and a
+genuine, correctly-diagnosed rejection.
+
+**What's still not covered**: `mir.extract_field` (hit twice, both on
+the kernel's ordinary `&[f32]` parameter, structurally irrelevant to the
+tile reasoning) falls through the translator's generic fallback --
+sound (an unconstrained value can only make an unrelated proof harder,
+never silently paper over one), but a real pointer field extracted this
+way would need its own rule if it were ever actually dereferenced in
+something this track verifies. The signature-bridging step (naming
+which real local is `tid`, which is the tile) is also still manual, not
+derived from the function's own debug/provenance attributes -- a
+mechanical next step, not a conceptual gap.
 
 The fresh agent, given only the plain kernel description and the ghost-op
 mechanism's rules (no access to the derivation above), derived:

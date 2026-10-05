@@ -1,0 +1,107 @@
+field val: Int
+
+method real_compiler_block_reduce(cells: Seq[Ref], tid_param: Int)
+  requires |cells| == 8
+  requires forall i: Int, j: Int :: 0 <= i && i < 8 && 0 <= j && j < 8 && i != j ==> cells[i] != cells[j]
+  requires 0 <= tid_param && tid_param < 8
+  requires acc(cells[tid_param].val)
+  ensures acc(cells[tid_param].val)
+{
+  var v0: Int
+  var v1: Int
+  var v2: Int
+  var v3: Int
+  var v4: Int
+  var v5: Bool
+  var v6: Int
+  var v7: Int
+  var v8: Int
+  var v9: Int
+  var v10: Bool
+  var v11: Int
+  var v12: Bool
+  var v13: Int
+  var v14: Int
+  var v15: Int
+  var v16: Int
+  var v17: Bool
+  var v18: Int
+  var v19: Int
+  var v20: Int
+  var v21: Int
+  var v22: Int
+  var v23: Int
+  var v24: Int
+  var v25: Int
+  var v26: Int
+  var v27: Int
+  var v28: Int
+  var v29: Int
+  var v30: Int
+  var v31: Int
+  var v32: Int
+  var v33: Int
+  var v34: Int
+  var v35: Int
+  var v36: Int
+  var v37: Int
+  var v38: Int
+  v1 := tid_param  // tid's alloca slot, bridged from the method parameter
+  v9 := 4  // stride's alloca slot: `let mut stride = 4usize;` in the skipped prefix
+  v11 := v9
+  var v51: Int := 1
+  var v52: Bool := v11 >= v51
+  v10 := v52
+  var v53: Bool := !v10
+  while (!v53)
+    invariant v9 <= 4
+    invariant acc(cells[v1].val)
+  {
+    v13 := v9
+    var v54: Int := 4
+    var v55: Bool := v13 <= v54
+    v12 := v55
+    var v56: Int
+    var v62: Int
+    v18 := v9
+    var v63: Bool := v1 < v18
+    v17 := v63
+    var v64: Bool := !v17
+    if (v64) {
+      var v65: Int := 2
+      var v66: Int := v9 \ v65
+      v9 := v66
+    } else {
+      v23 := v9
+      var v68: Int := v1 + v23
+      v22 := v68
+      exhale true
+      inhale acc(cells[v22].val)
+      var v73: Int
+      var v78: Int := cells[v1].val
+      v24 := v78
+      v31 := v9
+      var v80: Int := v1 + v31
+      v30 := v80
+      var v84: Int := cells[v30].val
+      v27 := v84
+      var v88: Int := v24 + v27
+      cells[v1].val := v88
+      v38 := v9
+      var v91: Int := v1 + v38
+      v37 := v91
+      exhale acc(cells[v37].val)
+      inhale true
+      var v96: Int
+      var v65: Int := 2
+      var v66: Int := v9 \ v65
+      v9 := v66
+    }
+    // re-entering header (back edge): recompute its condition/invariants
+    v11 := v9
+    v51 := 1
+    v52 := v11 >= v51
+    v10 := v52
+    v53 := !v10
+  }
+}
