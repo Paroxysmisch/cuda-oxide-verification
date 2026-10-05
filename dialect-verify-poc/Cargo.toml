@@ -1,0 +1,11 @@
+[package]
+name = "dialect-verify-poc"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Phase 1 POC: a minimal ghost 'verify' pliron dialect coexisting with real dialect-mir operations in one function, plus an erasure pass. Standalone (not patched into mir-importer) so it doesn't need the rustc-dev toolchain the real codegen backend requires -- see ../NOTES.md."
+
+[dependencies]
+dialect-mir = { path = "../cuda-rust/cuda-oxide/crates/dialect-mir" }
+pliron = { git = "https://github.com/pliron-org/pliron", rev = "06d99a3df938394583715aacf5eadb65b4791c09" }
+pliron-derive = { git = "https://github.com/pliron-org/pliron", rev = "06d99a3df938394583715aacf5eadb65b4791c09" }

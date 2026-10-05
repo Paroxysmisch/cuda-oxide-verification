@@ -1,0 +1,14 @@
+[package]
+name = "verify-proto"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Plain-Rust half of the verification prototype: the unannotated stage-0 kernel snapshot and the Verus-free sanity-check backstop. The Verus-verified half (stage1/stage2) lives in ../verus-proof and is checked by the `verus` binary directly, not by cargo -- see ../README.md."
+
+[[bin]]
+name = "sanity_check"
+path = "src/bin/sanity_check.rs"
+
+[lib]
+name = "verify_proto"
+path = "src/lib.rs"

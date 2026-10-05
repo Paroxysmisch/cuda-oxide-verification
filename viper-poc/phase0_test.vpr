@@ -1,0 +1,48 @@
+// Phase 0, step 3: hand-written sanity check of Viper's permission model,
+// before generating anything automatically. Models the exact shape we need
+// for shared-memory cells: a Ref per cell, a field holding its value, and
+// `acc(cell.val)` as the "I exclusively own this cell" permission --
+// the direct analogue of Verus's PointsTo from the earlier prototype.
+
+field val: Int
+
+// Reusable per-cell write, the Viper analogue of tile_write_at.
+method write_cell(c: Ref, v: Int)
+  requires acc(c.val)
+  ensures  acc(c.val) && c.val == v
+{
+  c.val := v
+}
+
+// POSITIVE: two threads, two distinct cells, each writes its own --
+// mirrors TilePerms' separate-struct-fields argument, now via Viper's
+// own separating conjunction instead of Verus's tracked-field disjointness.
+method two_threads_disjoint_cells(c0: Ref, c1: Ref, v0: Int, v1: Int)
+  requires acc(c0.val) && acc(c1.val) && c0 != c1
+  ensures  acc(c0.val) && acc(c1.val)
+  ensures  c0.val == v0 && c1.val == v1
+{
+  write_cell(c0, v0)
+  write_cell(c1, v1)
+}
+
+// NEGATIVE: writing to a cell with NO permission at all. Correction from
+// the first attempt: a method whose *precondition* is unsatisfiable
+// verifies vacuously in Hoare logic (no caller could ever invoke it
+// soundly, but that's not the same as the body being checked against a
+// real permission). This version actually exercises the check.
+method missing_permission_should_fail(c: Ref, v: Int)
+{
+  c.val := v
+}
+
+// NEGATIVE, closer to our real concern: a block of threads, each claiming
+// ownership of cell `f(t)`. If `f` is not injective, two threads' claims
+// alias and the quantified permission cannot actually be split up front --
+// this is the direct Viper analogue of the barrier-redistribution bijection
+// argument from the Verus prototype.
+method bad_non_injective_redistribution(cells: Seq[Ref], n: Int)
+  requires |cells| == n
+  requires forall t: Int :: 0 <= t && t < n ==> acc(cells[t % 2].val)
+{
+}

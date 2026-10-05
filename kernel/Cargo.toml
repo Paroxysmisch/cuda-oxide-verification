@@ -1,0 +1,19 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The real, annotated shared_test kernel: compiles normally against the real cuda-device/cuda-macros crates from the cuda-rust submodule, and (via the verus_keep_ghost cfg) is the same file Verus checks. See ../README.md."
+
+[dependencies]
+cuda-device = { path = "../cuda-rust/cuda-oxide/crates/cuda-device" }
+
+[lib]
+name = "kernel"
+path = "src/lib.rs"
+
+[lints.rust]
+# `verus_keep_ghost` is set internally by the `verus` binary, never by
+# cargo -- declaring it here just tells rustc's check-cfg lint it's a
+# recognized, deliberate cfg rather than a typo.
+unexpected_cfgs = { level = "allow", check-cfg = ["cfg(verus_keep_ghost)"] }

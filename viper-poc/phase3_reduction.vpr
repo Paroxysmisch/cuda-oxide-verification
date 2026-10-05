@@ -1,0 +1,47 @@
+field val: Int
+
+method poc(cells: Seq[Ref], tid: Int)
+  requires |cells| == 8
+  requires forall i: Int, j: Int :: 0 <= i && i < 8 && 0 <= j && j < 8 && i != j ==> cells[i] != cells[j]
+  requires 0 <= tid && tid < 8
+  requires acc(cells[tid].val)
+  ensures acc(cells[tid].val)
+{
+  var v1: Int
+  var v2: Int := 4
+  v1 := v2
+  var v3: Int := 0
+  var v4: Bool := v1 >= v3
+  var v5: Int := 4
+  var v6: Bool := v1 <= v5
+  var v7: Int := 1
+  var v8: Bool := v1 >= v7
+  while (v8)
+    invariant v1 >= 0
+    invariant v1 <= 4
+    invariant acc(cells[tid].val)
+  {
+    var v9: Bool := tid < v1
+    if (v9) {
+      var v10: Int := tid + v1
+      exhale true
+      inhale acc(cells[v10].val)
+      var v12: Int := cells[tid].val
+      var v14: Int := cells[v10].val
+      var v15: Int := v12 + v14
+      cells[tid].val := v15
+      exhale acc(cells[v10].val)
+      inhale true
+    }
+    var v16: Int := 2
+    var v17: Int := v1 \ v16
+    v1 := v17
+    // re-entering header (back edge): recompute its condition/invariants
+    v3 := 0
+    v4 := v1 >= v3
+    v5 := 4
+    v6 := v1 <= v5
+    v7 := 1
+    v8 := v1 >= v7
+  }
+}

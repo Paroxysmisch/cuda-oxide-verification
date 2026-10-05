@@ -1,0 +1,18 @@
+field val: Int
+
+method poc(cells: Seq[Ref], tid: Int, bound: Int, claim: Bool)
+  requires |cells| == 256
+  requires forall i: Int, j: Int :: 0 <= i && i < 256 && 0 <= j && j < 256 && i != j ==> cells[i] != cells[j]
+  requires forall i: Int :: 0 <= i && i < 256 ==> acc(cells[i].val)
+  requires 0 <= tid && tid < 256
+  requires claim
+{
+  assert claim
+  var v1: Bool := tid < bound
+  if (v1) {
+    cells[tid].val := tid
+  } else {
+    var v3: Int := 0
+    cells[tid].val := v3
+  }
+}

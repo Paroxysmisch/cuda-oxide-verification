@@ -1,0 +1,21 @@
+// Phase 2 slice: hand-translation of the EXACT dialect-mir op sequence
+// built and run in Phase 1 --
+//   verify.assert(cond)
+//   mir.store(ptr, v)
+//   mir.return
+// -- into Viper, following the fixed, mechanical rule a real translator
+// would apply: `ptr: *mut i32` -> Ref with one `val: Int` field,
+// `verify.assert(c)` -> `assert c`, `mir.store(ptr, v)` -> `ptr.val := v`.
+// This version supplies `cond` as true via the precondition (the simplest
+// case where the ghost assertion is actually derivable), matching what
+// Phase 1 demonstrated structurally.
+
+field val: Int
+
+method poc(ptr: Ref, cond: Bool, v: Int)
+  requires acc(ptr.val)
+  requires cond          // stands in for whatever context proves the assert
+{
+  assert cond            // <- from verify.assert(cond)
+  ptr.val := v           // <- from mir.store(ptr, v)
+}

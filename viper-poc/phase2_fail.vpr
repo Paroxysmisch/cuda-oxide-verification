@@ -1,0 +1,13 @@
+// Same translation, deliberately broken: `cond` is no longer given by the
+// precondition, so the ghost assertion `verify.assert(cond)` has nothing
+// to derive it from -- a direct analogue of an LLM-drafted annotation that
+// doesn't actually hold at that program point. Should be rejected.
+
+field val: Int
+
+method poc_broken(ptr: Ref, cond: Bool, v: Int)
+  requires acc(ptr.val)
+{
+  assert cond
+  ptr.val := v
+}
