@@ -1,26 +1,171 @@
 # cuda-oxide-verification
 
-A small, real, end-to-end prototype of formally verifying a `cuda-oxide`
-(now `cuda-rust`) GPU kernel's `unsafe` shared-memory code — race-freedom
-*and* functional correctness, checked by [Verus](https://github.com/verus-lang/verus),
-not asserted in a comment.
+Formal verification of a real `cuda-oxide` (now `cuda-rust`) GPU kernel's
+`unsafe` shared-memory code — the exact pattern cuda-oxide's own
+safety-model docs name as currently unenforced by the type system: many
+SIMT threads touching the same `static mut` shared array across
+`sync_threads()` barriers, each access `unsafe`.
 
-The kernel is the real `shared_test` kernel from
+Two independent tracks, in this order of maturity:
+
+1. **`dialect-mir` + Viper/Silicon** (`dialect-verify-poc/`, `viper-poc/`,
+   and the `dialect-verify` crate added to the `cuda-rust` submodule) —
+   verification hosted *inside cuda-oxide's own compiler*, at the
+   `dialect-mir` IR stage, via thin ghost ops erased before codegen. This
+   is the complete, currently-maintained track: real `verify_*!` macros,
+   compiled by the real `rustc` → `mir-importer` pipeline, translated by a
+   real (if deliberately scoped) `dialect-mir` → Viper translator, checked
+   by the real `silicon` verifier — for race-freedom across any number of
+   threads *and* the reduction's numeric correctness.
+2. **Verus** (`verus-proof/`, `kernel/`, `verify-proto/`) — an earlier,
+   separate prototype: one file, `kernel_dual.rs`, compiles to the real
+   kernel under plain `cargo build` and to a Verus-checked proof under
+   `verus`, selected by a `cfg` Verus itself sets. Proves race-freedom and
+   functional correctness for a different (simpler, single-barrier) real
+   kernel. Not extended further once the `dialect-mir`/Viper track proved
+   out a cleaner architecture — kept as-is, see its own section below.
+
+## Quick start — track 1 (`dialect-mir` + Viper)
+
+```bash
+scripts/install_verus.sh      # one-time: builds Verus from source. Needed
+                               # here only for its bundled aarch64 Z3 binary
+                               # (Viper ships none for this platform) -- the
+                               # Verus proof itself is track 2's, unrelated.
+scripts/install_viper.sh      # one-time: downloads the Viper/Silicon tools
+scripts/run_viper_poc.sh      # Phases 0-5: hand-built IR through the real
+                               # translator, pass + deliberately-broken
+                               # variants, at every stage
+scripts/run_real_compiler_poc.sh   # the real closure: an actual verify_*!-
+                               # annotated kernel, compiled by the real
+                               # rustc/mir-importer, through the real
+                               # translator, checked by Silicon
+```
+
+Last run: every phase behaves as documented — real passes verify, every
+deliberately-broken variant is rejected with a diagnostic naming the exact
+problem, not a generic failure. See `NOTES.md` for the full, phase-by-phase
+writeup; the summary below is deliberately short.
+
+### What's actually proven, and how
+
+The real kernel (`cuda-rust/cuda-oxide/crates/rustc-codegen-cuda/examples/verify_demo/src/main.rs`)
+is a stride-halving block-sum reduction over 8 shared-memory cells,
+annotated inline with ghost calls:
+
+```rust
+verify_invariant!(stride <= 4);
+verify_perm!(core::ptr::addr_of!(TILE[tid]));
+if tid < stride {
+    verify_acquire!(core::ptr::addr_of!(TILE[tid + stride]));
+    TILE[tid] = TILE[tid] + TILE[tid + stride];
+    verify_release!(core::ptr::addr_of!(TILE[tid + stride]));
+}
+```
+
+These compile through the **real** cuda-oxide pipeline — `rustc` →
+`mir-importer` (a patched dispatch table lowers these calls to
+`dialect-verify` ghost ops, interleaved with the real `dialect-mir` ops the
+rest of the kernel produces) → a debug hook that hands the still-annotated
+IR to a real `dialect-mir` → Viper translator → `silicon`/Z3. Then, in the
+*same* real build, every ghost op is erased before `mem2reg`/loop
+unrolling/LLVM export ever run — `verify_demo.ptx` contains the kernel's
+real instructions and zero trace of any of this.
+
+Proven, for this kernel, mechanically:
+- **Memory safety and race-freedom for one generic thread**, inductively
+  over the loop (no unrolling) — `real_compiler_block_reduce.vpr`.
+- **The N-thread combination argument's missing hypothesis**: the
+  barrier's redistribution never double-grants a cell, checked generically
+  over every valid `stride` — `phase5_nthread_injectivity.vpr`.
+- **Numeric correctness**: thread 0 ends up holding the actual sum of all
+  8 original elements, via a hand-written recursive "strided sum" function
+  and an inductive merge lemma (Viper has no builtin summation) —
+  `phase5_numeric_correctness.vpr`.
+
+Every one of these has a deliberately-broken sibling file/variant,
+confirmed to be rejected with a diagnostic pointing at the actual problem
+— not just a pass-only demo. See `NOTES.md`'s "Phase 5" and "Closing the
+loop for real" sections for the complete derivation, every real bug hit
+and fixed along the way, and what's honestly still not covered (the
+N-thread and numeric-correctness proofs aren't yet mechanically linked to
+each other in one unified artifact; both cite the same kind of
+by-symmetry argument CSL's parallel rule itself is cited, not re-derived).
+
+## Layout
+
+```
+cuda-rust/                        the submodule (NVIDIA/cuda-rust) -- a
+                                   real build dependency, not reference
+                                   material. New crates added to it:
+  cuda-oxide/crates/dialect-verify/   the ghost-op dialect (verify.assert,
+                                   verify.invariant, verify.perm,
+                                   verify.acquire, verify.release) plus
+                                   the dialect-mir -> Viper translator
+  cuda-oxide/crates/cuda-device/src/verify.rs
+                                   verify_assert!/verify_invariant!/
+                                   verify_perm!/verify_acquire!/
+                                   verify_release! -- the real macro
+                                   front end
+  cuda-oxide/crates/mir-importer/  patched: dispatches the above to
+                                   dialect-verify ops; erases them again
+                                   right after each function's own
+                                   dialect-mir verification
+  .../examples/verify_demo/       the real, compiling example kernel
+  .../examples/verify_demo_broken/    same kernel, one deliberate bug
+
+dialect-verify-poc/              standalone POC crate: the SAME ghost-op
+                                   mechanism and translator, built against
+                                   hand-constructed dialect-mir (via
+                                   pliron directly) rather than real
+                                   compiler output -- phase1-4 binaries,
+                                   each runnable and self-explanatory
+  src/bin/phase1_erasure.rs         ghost op coexists with a real op,
+                                   erasure removes only the ghost one
+  src/bin/phase2_translate.rs       a real automated translator run, on a
+                                   hand-built if/else kernel, pass + fail
+  src/bin/phase3_reduction.rs       the full stride-halving reduction,
+                                   hand-built, a genuine loop (no
+                                   unrolling); `--broken` for the rejected
+                                   variant
+  src/bin/phase4_llm_annotations.rs  a fresh, context-isolated agent's
+                                   independently-drafted annotations,
+                                   run through the same real pipeline
+
+viper-poc/                        the `.vpr` files every phase produces
+                                   and checks, plus the hand-written
+                                   Phase 0 sanity tests and Phase 5's
+                                   N-thread/numeric-correctness proofs
+                                   (pass + deliberately-broken variants
+                                   for every claim)
+
+scripts/
+  install_viper.sh                 downloads Viper/Silicon
+  run_viper_poc.sh                  Phases 0-5, hand-built IR
+  run_real_compiler_poc.sh          the real rustc/mir-importer closure
+  install_verus.sh / run_proof.sh   track 2 (Verus), below
+
+verus-proof/, kernel/, verify-proto/, docs/
+                                   track 2 -- see "Track 2: Verus" below
+
+NOTES.md                          the complete, honest writeup: every
+                                   phase, every real bug found and fixed,
+                                   what's proven vs. cited vs. still open
+```
+
+## Track 2: Verus
+
+A small, real, end-to-end prototype of formally verifying a different
+real `cuda-oxide` kernel's `unsafe` shared-memory code — `shared_test`
+from
 [`cuda-rust/cuda-oxide/crates/rustc-codegen-cuda/examples/sharedmem/src/main.rs`](cuda-rust/cuda-oxide/crates/rustc-codegen-cuda/examples/sharedmem/src/main.rs),
-and it is compiled from the **actual `cuda-device`/`cuda-macros` crates** in
-the `cuda-rust` submodule — not a lookalike. It writes `TILE[tid] =
-data[gid]` to `static mut` shared memory, calls `thread::sync_threads()`,
-then reads *its neighbor's* cell: `TILE[(tid + 1) % N]`. Two threads
-touching the same `static mut` across a barrier, both `unsafe` — exactly
-the pattern cuda-oxide's own safety-model docs name as currently
-unenforced by the type system.
-
-## Quick start
+compiled against the actual `cuda-device`/`cuda-macros` crates. It writes
+`TILE[tid] = data[gid]`, calls `thread::sync_threads()`, then reads *its
+neighbor's* cell: `TILE[(tid + 1) % N]`.
 
 ```bash
 scripts/install_verus.sh   # one-time; builds Verus from source (no prebuilt
-                            # release exists for linux-aarch64, i.e. this GB10
-                            # box) -- takes a few minutes, needs network
+                            # release exists for linux-aarch64)
 scripts/run_proof.sh        # runs the Verus proof, builds the real kernel
                             # against the real cuda-device crate, runs the
                             # brute-force sanity check -- one PASS/FAIL summary
@@ -30,89 +175,26 @@ Last run: `verification results:: 7 verified, 0 errors`, the real kernel
 builds clean against `cuda-device`, sanity check PASS for N in {1, 2, 4, 8,
 16, 32, 256, 1024}.
 
-## One file, two compilations
+**One file, two compilations.** The real kernel and the verified kernel
+are the same source file, [`verus-proof/kernel_dual.rs`](verus-proof/kernel_dual.rs).
+`cargo build` in [`kernel/`](kernel/) compiles the `#[cfg(not(verus_keep_ghost))]`
+branch — the real, untouched kernel; `verus` compiles the
+`#[cfg(verus_keep_ghost)]` branch — the verified version, built on
+`Tile`/`TilePerms` from `stage1_gpu_semantics.rs`. `verus_keep_ghost` is a
+cfg Verus sets internally, confirmed empirically (see `NOTES.md`).
 
-The real kernel and the verified kernel are **the same source file**:
-[`verus-proof/kernel_dual.rs`](verus-proof/kernel_dual.rs). Which half is
-"live" is decided automatically by which tool compiles it:
+**What's claimed**, for any block size `n > 0`: race-freedom between the
+two `unsafe` blocks, and `out[i] == data[(i + 1) % n]` for every thread
+`i`, proven by Z3 as a single `forall`-quantified fact — cross-checked
+empirically up to N=1024 by `verify-proto`'s `sanity_check` binary.
+**What it does not prove**: that the real branch and the verified branch
+compute the same thing — nothing mechanically checks that; it's asserted
+by whoever writes the file. This is exactly the architectural ceiling that
+motivated moving to track 1 (verifying the real, unmodified kernel source
+directly, with no separate "verified twin" to keep in sync) — see
+`NOTES.md`'s early sections for the full design history.
 
-- `cargo build` in [`kernel/`](kernel/) — an ordinary crate depending on the
-  real `cuda-device` path dependency from the submodule — compiles the
-  `#[cfg(not(verus_keep_ghost))]` branch: the real `#[cuda_module]`/
-  `#[kernel]` kernel, `static mut TILE: SharedArray<f32, 256>`, the real
-  `unsafe` blocks, untouched.
-- `verus` compiles the `#[cfg(verus_keep_ghost)]` branch: the verified
-  version, built on `Tile`/`TilePerms` from `stage1_gpu_semantics.rs`.
-  (`verus_keep_ghost` is a cfg Verus sets internally — confirmed
-  empirically, not assumed: see `NOTES.md`.)
-
-This is the literal, not metaphorical, answer to "strip the
-theorem-proving stuff and you're left with the final kernel": compile this
-file without Verus and the verified branch is pruned by `cfg` before
-type-checking even starts. What `cargo build` produces is the real kernel,
-because that's the only branch it ever saw.
-
-## What's actually being claimed
-
-For `shared_test`, for **any block size `n > 0`**:
-
-- **Race-freedom**: the two `unsafe` blocks in the real kernel never race,
-  despite both operating on the same `static mut TILE`.
-- **Functional correctness**: `out[i] == data[(i + 1) % n]` for every
-  thread `i`, for any `n` — verified by Z3 as a single `forall`-quantified
-  fact, not just checked on sampled inputs.
-
-It's also cross-checked empirically for N up to 1024 by `verify-proto`'s
-`sanity_check` binary — the same belt-and-suspenders pairing of a formal
-proof with an independent dynamic check that cuda-oxide's own rustlantis
-fuzzer plays relative to its compiler.
-
-**What this does *not* prove**: that the real branch and the verified
-branch actually compute the same thing. Nothing automatically checks that
-— it's asserted by whoever writes the file (here, standing in for an LLM),
-the same translation-validation trust gap named earlier in the design
-process, now visible side by side in one file rather than hidden across
-two, which helps a reviewer but doesn't close the gap. See `NOTES.md`.
-
-The verified branch is written against `tile_macros.rs` —
-`tile_write!`, `tile_read_neighbor!`, `cuda_sync!` — small `macro_rules!`
-macros, not a full kernel-parsing `proc_macro_attribute`; `NOTES.md`
-explains why.
-
-## Layout
-
-```
-cuda-rust/              the submodule (NVIDIA/cuda-rust) -- now a REAL build
-                         dependency (kernel/'s Cargo.toml path-depends on
-                         cuda-rust/cuda-oxide/crates/cuda-device), not just
-                         reference material
-verus-proof/             the proof source -- fed directly to the `verus`
-                         binary (vstd/verus! need Verus's own patched
-                         toolchain, which plain cargo can't provide)
-  lib.rs                   entry point `verus` is pointed at
-  stage1_gpu_semantics.rs  hand-built, reusable infra (NOT "LLM output"):
-                           Tile/TilePerms (arbitrary size), the spawn axiom,
-                           the barrier, tile_write_at/tile_read_at
-  tile_macros.rs           macro_rules! sugar (tile_write!, etc.)
-  kernel_dual.rs           THE kernel -- real branch + verified branch,
-                           cfg-selected, same file `kernel/` also compiles
-kernel/                 ordinary cargo crate, pinned to cuda-rust's own
-                         nightly toolchain, depends on the real cuda-device
-  src/lib.rs               includes verus-proof/kernel_dual.rs by path
-verify-proto/            plain cargo crate (builds with stable rustc)
-  src/pipeline/
-    stage0_plain_kernel.rs  standalone reference snapshot (superseded as
-                             the verification target by kernel_dual.rs,
-                             kept as a readable, dependency-free copy)
-  src/bin/sanity_check.rs   independent brute-force cross-check, no Verus
-scripts/
-  install_verus.sh        detects OS/arch, prefers a prebuilt release,
-                           falls back to building from source
-  run_proof.sh             single entry point: proof + real build + sanity
-NOTES.md                 maps every file back to the underlying design
-```
-
-See [`NOTES.md`](NOTES.md) for the concept-by-concept mapping (located
-resources, barrier tokens, why race-freedom falls out of struct/index
-disjointness rather than an explicit check, the `verus_keep_ghost`
-mechanism, what's trusted vs. proved, and what's still simplified).
+See [`NOTES.md`](NOTES.md) for the concept-by-concept mapping across both
+tracks: located resources, barrier tokens, the `verus_keep_ghost`
+mechanism, the full `dialect-mir`/Viper architecture and every phase's
+real results, what's trusted vs. proved, and what's still open.
