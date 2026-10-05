@@ -1,0 +1,64 @@
+// Phase 5, part 1: the N-thread combination argument's missing piece.
+//
+// real_compiler_block_reduce.vpr proves ONE generic thread, parameterized
+// by tid, behaves safely GIVEN it holds acc(cells[tid].val) permanently and
+// is granted a clean acquire/release of its partner cell (tid+stride) each
+// round. That is N separate, independent Hoare triples -- not yet a
+// concurrency proof. Concurrent Separation Logic's parallel-composition
+// rule says N such triples combine into "safe when run together" PROVIDED
+// their resource claims are pairwise disjoint at every point. The one
+// thing not yet checked anywhere: that disjointness, globally, across all
+// 8 threads at once, for every round the real kernel's loop runs.
+//
+// The crux, independent of which concrete stride value: the set of cells
+// being WRITTEN this round ({t : t < stride}, each active thread writing
+// its own cell) and the set of cells being READ this round
+// ({t + stride : t < stride}, each active thread's partner) must never
+// overlap -- if they did, some thread's write would race some OTHER
+// thread's read (or, since the active-write-set only touches ITS OWN
+// index, with another active thread's write). This is exactly what a
+// quantified-permission precondition's own well-formedness check proves:
+// Viper requires the receiver set of `forall t :: cond(t) ==> acc(e(t))`
+// (and, for a conjunction of several such clauses, the UNION of their
+// receiver sets) to be injective -- no two different (clause, t) pairs
+// may ever name the same heap location. Phase 0 already showed Silicon
+// catches a violation of exactly this (`bad_non_injective_redistribution`);
+// this file states the REAL redistribution real_compiler_block_reduce.vpr
+// relies on, generically over every stride the loop's own invariant
+// allows (1 <= stride <= 4, matching that proof's `invariant v9 <= 4`
+// exactly), and confirms Silicon accepts it -- then confirms it correctly
+// rejects a deliberately wrong redistribution function, the same
+// off-by-one shape as verify_demo_broken.
+
+field val: Int
+
+// `stride` is left symbolic, bounded exactly as the per-thread loop's own
+// invariant establishes it is at every check -- so this isn't "checked for
+// stride=4, 2, 1" as three separate facts, it's checked once, for every
+// value the real loop could ever be examined at.
+method round_redistribution_is_injective(cells: Seq[Ref], stride: Int)
+  requires |cells| == 8
+  requires forall i: Int, j: Int :: 0 <= i && i < 8 && 0 <= j && j < 8 && i != j ==> cells[i] != cells[j]
+  requires stride >= 1 && stride <= 4
+  requires forall t: Int :: 0 <= t && t < stride ==>
+             acc(cells[t].val) && acc(cells[t + stride].val)
+{
+}
+
+// Deliberately broken: the same off-by-one bug as verify_demo_broken
+// (reading one past the real partner cell). At stride=4, t=3: partner
+// would be 3+4+1=8 -- out of the declared `cells` range entirely, which
+// Viper rejects as its own, separate error (an out-of-bounds sequence
+// index) before injectivity is even in question. To isolate the
+// injectivity check specifically (not just bounds), this uses `t+1`
+// instead: at stride=2, t=0's "partner" becomes cells[1] -- which is
+// thread 1's OWN cell, and thread 1 is ALSO active this round (1 < 2).
+// Two different t values (t=0's partner slot, t=1's own slot) then name
+// the same ref: exactly the double-claim a real race would be.
+method round_redistribution_broken_off_by_one(cells: Seq[Ref], stride: Int)
+  requires |cells| == 8
+  requires stride >= 1 && stride <= 4
+  requires forall t: Int :: 0 <= t && t < stride ==>
+             acc(cells[t].val) && acc(cells[t + 1].val)
+{
+}

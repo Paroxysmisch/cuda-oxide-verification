@@ -30,6 +30,14 @@ run_silicon() {
   java -cp "$SILICON_CP" viper.silicon.SiliconRunner --z3Exe "$Z3" "$1" 2>/dev/null | tail -4
 }
 
+# phase5_numeric_correctness*.vpr's recursive strided_sum/merge_lemma
+# proof needs a larger JVM thread stack than Silicon's default -- without
+# it, Silicon itself crashes with a StackOverflowError (not a Viper-level
+# error) partway through. -Xss is harmless for every other file here.
+run_silicon_deep() {
+  java -Xss256m -cp "$SILICON_CP" viper.silicon.SiliconRunner --z3Exe "$Z3" "$1" 2>/dev/null | tail -4
+}
+
 echo "=================================================================="
 echo " 1/3  Phase 0: hand-written Viper permission sanity checks"
 echo "=================================================================="
@@ -70,7 +78,23 @@ popd >/dev/null
 
 echo
 echo "=================================================================="
-echo "Phase 0-4 POC complete. Phase 0's test file has one method"
+echo " Phase 5, part 1: N-thread combination argument (injectivity)"
+echo "=================================================================="
+run_silicon "$ROOT/viper-poc/phase5_nthread_injectivity.vpr"
+
+echo
+echo "=================================================================="
+echo " Phase 5, part 2: numeric correctness (correct + broken)"
+echo "=================================================================="
+echo "--- correct (own + partner): expect Verification successful ---"
+run_silicon_deep "$ROOT/viper-poc/phase5_numeric_correctness.vpr"
+echo "--- broken (own - partner): expect invariant.not.preserved ---"
+run_silicon_deep "$ROOT/viper-poc/phase5_numeric_correctness_broken.vpr"
+
+echo
+echo "=================================================================="
+echo "Phase 0-5.2 POC complete. Phase 0's test file has one method"
 echo "(bad_non_injective_redistribution) that is SUPPOSED to fail; Phase 3's"
-echo "--broken run is ALSO supposed to fail -- read NOTES.md, don't just"
-echo "check exit codes."
+echo "--broken run is ALSO supposed to fail; phase5_nthread_injectivity.vpr's"
+echo "second method and phase5_numeric_correctness_broken.vpr are ALSO"
+echo "supposed to fail -- read NOTES.md, don't just check exit codes."

@@ -584,6 +584,108 @@ check as every other result in this document; a wrong draft would have
 been caught the same way the off-by-one variant was in Phase 3, not
 rubber-stamped because it "looked right."
 
+## Phase 5: the two gaps named explicitly above, closed
+
+Everything above proves ONE generic thread's permission bookkeeping is
+self-consistent. Two honestly-flagged gaps remained: (1) combining N such
+per-thread proofs into a whole-block guarantee, and (2) that the reduction
+computes the right *value*, not just that it never touches memory it
+shouldn't. Both closed, in `viper-poc/phase5_*.vpr`.
+
+### Part 1 — the N-thread combination argument
+
+Concurrent Separation Logic's parallel-composition rule says N per-thread
+Hoare triples combine into "safe to run together" provided their resource
+claims are pairwise disjoint. That rule itself is standard, cited
+background theory here, not re-derived -- what was missing was checking
+its one real hypothesis for *this* kernel: that the barrier's
+redistribution (every thread keeps its own cell; active threads
+additionally, temporarily, read their partner's) never double-grants a
+cell to two different claims.
+
+`phase5_nthread_injectivity.vpr` states exactly that, as a single
+quantified-permission precondition with `stride` left symbolic (bounded
+`1 <= stride <= 4`, matching `real_compiler_block_reduce.vpr`'s own
+`invariant v9 <= 4` exactly, so it's checked for every round the real
+loop ever examines, not three separate hardcoded cases):
+```viper
+requires forall t: Int :: 0 <= t && t < stride ==>
+           acc(cells[t].val) && acc(cells[t + stride].val)
+```
+Viper's own well-formedness check on a quantified permission requires its
+receiver set to be injective -- this is the exact mechanism Phase 0's
+`bad_non_injective_redistribution` test already demonstrated catching a
+real violation. **Verification successful**: the real redistribution is
+injective, generically. A deliberately wrong one-off variant
+(`t + 1` instead of `t + stride`, the same shape of bug as
+`verify_demo_broken`) is **correctly rejected**:
+`Quantified resource cells[t].val might not be injective` — Silicon finds
+the actual collision (at `stride=2`, thread 0's claimed "partner" and
+thread 1's own cell coincide).
+
+### Part 2 — numeric correctness
+
+A different kind of claim: thread 0 ends up holding the sum of all 8
+original elements. Viper has no built-in summation, so this needed real
+new machinery, used nowhere else in this project:
+
+- `strided_sum(o, i, s, c)`: a recursive Viper function defining "the sum
+  of `c` elements of `o`, starting at `i`, spaced `s` apart".
+- `merge_lemma`: the one genuine piece of new math this needs -- merging
+  two interleaved width-`s` strided sums into one double-width strided
+  sum, proved by induction on the count (the two sums' terms interleave
+  into exactly the merged sum's terms, just reordered; addition doesn't
+  care about order).
+- The loop invariant, parameterized by the current `stride` exactly like
+  the permission proofs: letting `width = (stride == 0 ? 1 : 2*stride)`,
+  `cells[tid].val == strided_sum(orig, tid, width, 8/width)` whenever
+  `tid < width`. The `stride == 0` case is the loop's *exit* state (after
+  the last round): width collapses to 1, giving `cells[0] == sum of all
+  8 original elements` as the postcondition -- the same one formula
+  covers every checkpoint, including the last, with no separately
+  special-cased exit logic.
+
+Getting this to verify took real, substantive debugging, all against
+genuine tool behavior:
+- **A JVM `StackOverflowError`** (not a Viper-level error) from Silicon
+  itself partway through -- a known rough edge with recursive-function
+  proofs this deep. Fixed by raising the JVM thread stack
+  (`java -Xss256m ...`); `scripts/run_viper_poc.sh` applies this only to
+  the two files that need it.
+- **An off-by-one in `strided_sum`'s own precondition**: a sum of `c`
+  terms starting at `i` accesses up to `o[i + (c-1)*s]`, not
+  `o[i + c*s]` -- the exact kind of arithmetic slip the whole point of
+  mechanical checking catches.
+- **Z3 not auto-chaining several levels of a recursive definition.**
+  Standard for this kind of proof, not a sign of a wrong lemma: both
+  `merge_lemma`'s own inductive step and the main invariant's
+  maintenance needed explicit `assert`s unfolding `strided_sum` one level
+  at a time, each immediately dischargeable from the function's own
+  defining equation, chained together with the recursive call's
+  postcondition.
+- **A real missing hypothesis, not a tooling quirk**: `1 <= stride <= 4`
+  alone doesn't imply `stride` is a power of two (`stride = 3` satisfies
+  it, and `3/2` truncates to `1`, breaking the halving arithmetic the
+  proof depends on). Had to add `stride == 4 || stride == 2 || stride ==
+  1 || stride == 0` explicitly -- a fact that's true of the real loop but
+  wasn't implied by what had been stated so far.
+
+With all of that: **Verification successful.** A deliberately broken
+variant (`own - partner` instead of `own + partner` -- same cells, same
+indices, same permissions, same injectivity; only the arithmetic is
+wrong) is **correctly rejected**, specifically by the numeric machinery
+(`invariant.not.preserved`), confirming this isn't vacuous: something
+that passes every permission-level check can still be caught here.
+
+**What this still doesn't close**: the value-level analogue of the
+acquire step -- "thread `tid`'s partner holds `strided_sum(...)` at this
+exact point" -- is *inhaled* (assumed), justified by the same N-thread
+symmetry argument as part 1's permission acquire, not mechanically linked
+to part 1's injectivity check or to another thread's own run of this same
+proof in one unified artifact. That linkage is exactly the same kind of
+"cited, not mechanized" step part 1 already named for CSL itself --
+consistent with this track's running theme, not a new, hidden gap.
+
 ## Still open: per-thread function + lifting rule, not a whole-block loop
 
 A real SIMT block runs `n` threads *concurrently*, each executing the same
