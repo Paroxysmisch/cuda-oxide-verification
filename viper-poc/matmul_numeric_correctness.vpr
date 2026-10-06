@@ -1,0 +1,95 @@
+// Numeric correctness for the tiled-matmul kernel (the matmul analogue of
+// phase5_numeric_correctness.vpr for the reduction): thread (row,col) ends
+// up holding the actual dot product sum_{j=0}^{3} A[row][j] * B[j][col],
+// not just "touched memory safely" (real_compiler_tiled_matmul.vpr, and
+// phase5-style injectivity, are both PERMISSION-only claims).
+//
+// Simpler than the reduction's case: this loop only ever ACCUMULATES one
+// more term each iteration (no combining two interleaved halves), so no
+// merge lemma is needed -- just a straightforward inductive sum, unfolded
+// one step at a time the same way strided_sum's proof already does.
+
+field val: Int
+
+// dot_sum(oa, ob, row, col, k) = sum_{j=0}^{k-1} oa[row*4+j] * ob[j*4+col]
+// -- the partial dot product after k of the 4 terms.
+function dot_sum(oa: Seq[Int], ob: Seq[Int], row: Int, col: Int, k: Int): Int
+  requires row >= 0 && row < 4
+  requires col >= 0 && col < 4
+  requires k >= 0 && k <= 4
+  requires |oa| == 16
+  requires |ob| == 16
+  decreases k
+{
+  k == 0 ? 0 : dot_sum(oa, ob, row, col, k - 1) + oa[row * 4 + (k - 1)] * ob[(k - 1) * 4 + col]
+}
+
+method numeric_correctness(cells: Seq[Ref], cells2: Seq[Ref], tid: Int, oa: Seq[Int], ob: Seq[Int])
+  requires |cells| == 16
+  requires |cells2| == 16
+  requires |oa| == 16
+  requires |ob| == 16
+  requires forall i: Int, j: Int :: 0 <= i && i < 16 && 0 <= j && j < 16 && i != j ==> cells[i] != cells[j]
+  requires forall i: Int, j: Int :: 0 <= i && i < 16 && 0 <= j && j < 16 && i != j ==> cells2[i] != cells2[j]
+  requires forall i: Int, j: Int :: 0 <= i && i < 16 && 0 <= j && j < 16 ==> cells[i] != cells2[j]
+  requires 0 <= tid && tid < 16
+  requires acc(cells[tid].val)
+  requires acc(cells2[tid].val)
+  // The load phase's own claim: this thread's two cells hold exactly its
+  // own slice of the two original (ghost) matrices -- the value-level
+  // counterpart of real_compiler_tiled_matmul.vpr's permission claim for
+  // the same load.
+  requires cells[tid].val == oa[tid]
+  requires cells2[tid].val == ob[tid]
+  ensures acc(cells[tid].val)
+  ensures acc(cells2[tid].val)
+  ensures cells[tid].val == dot_sum(oa, ob, tid \ 4, tid % 4, 4)
+{
+  var row: Int := tid \ 4
+  var col: Int := tid % 4
+  var acc_val: Int := 0
+  var k: Int := 0
+
+  // Base case: nothing summed yet.
+  assert dot_sum(oa, ob, row, col, 0) == 0
+
+  while (k < 4)
+    invariant k >= 0 && k <= 4
+    invariant acc(cells[tid].val)
+    invariant acc(cells2[tid].val)
+    invariant acc_val == dot_sum(oa, ob, row, col, k)
+  {
+    exhale true
+    inhale acc(cells[row * 4 + k].val)
+    // The acquire grants PERMISSION only. The VALUE fact -- that this
+    // cell still holds its original load-phase value -- comes from the
+    // same argument real_compiler_tiled_matmul.vpr's acquire already
+    // relies on at the permission level: nothing ever writes to any cell
+    // of either tile between the load phase and this kernel's own final
+    // write-back, so by the N-thread symmetry every thread's load-phase
+    // claim (cells[i].val == oa[i]) still holds for every i throughout
+    // the loop. Assumed here the same way the permission itself is.
+    inhale cells[row * 4 + k].val == oa[row * 4 + k]
+    exhale true
+    inhale acc(cells2[k * 4 + col].val)
+    inhale cells2[k * 4 + col].val == ob[k * 4 + col]
+
+    var own_a: Int := cells[row * 4 + k].val
+    var own_b: Int := cells2[k * 4 + col].val
+    acc_val := acc_val + own_a * own_b
+
+    exhale acc(cells[row * 4 + k].val)
+    inhale true
+    exhale acc(cells2[k * 4 + col].val)
+    inhale true
+
+    // Z3 won't chain the recursive function's definition on its own --
+    // state the one unfolding step directly, dischargeable immediately
+    // from dot_sum's own defining equation.
+    assert dot_sum(oa, ob, row, col, k + 1) == dot_sum(oa, ob, row, col, k) + oa[row * 4 + k] * ob[k * 4 + col]
+
+    k := k + 1
+  }
+
+  cells[tid].val := acc_val
+}

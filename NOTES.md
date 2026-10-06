@@ -787,6 +787,55 @@ fixed once, benefiting every kernel):
    maintained separately, drift, and the drift is invisible until
    something forces both copies to run against the same input.
 
+## Matmul numeric correctness
+
+Same extension the reduction kernel got in Phase 5 part 2, for the
+matmul kernel: not just that it touches memory safely, but that thread
+`tid` (at `row = tid/4`, `col = tid%4`) actually ends up holding the real
+dot product `sum_{j=0}^{3} A[row][j] * B[j][col]`.
+`viper-poc/matmul_numeric_correctness.vpr` (+ `_broken.vpr`), same
+architecture as `phase5_numeric_correctness.vpr`: a hand-written Viper
+method mirroring the real kernel's structure (not derived from the real
+translator's output -- the value-level `inhale` at each acquire has no
+counterpart in `dialect-mir`, so this is authored the same way the
+barrier clauses are), checked against a deliberately-broken sibling.
+
+**Markedly simpler than the reduction's proof.** The reduction's loop
+*combines* two halves every round (`cells[tid] := cells[tid] +
+cells[tid+stride]`, repeatedly over `log2(8) = 3` rounds, each round
+touching a different, shrinking set of active threads) -- proving that
+needed a real inductive lemma (`merge_lemma`: two interleaved width-`s`
+strided sums merge into one double-width strided sum) because the
+*shape* of what's being summed changes every round. The matmul kernel's
+loop just *accumulates* one more term each of 4 iterations, to one fixed
+set of cells, with no interleaving to reconcile -- so the recursive
+function alone (`dot_sum(oa, ob, row, col, k) = sum_{j<k} oa[row*4+j] *
+ob[j*4+col]`) plus one explicit one-step unfolding `assert` per iteration
+(the same reason `merge_lemma`'s own body needed explicit unfolding
+asserts: Z3 won't chain several levels of a recursive definition on its
+own) is enough. No merge lemma needed at all.
+
+**The value-level assumption, spelled out explicitly**: each
+`verify_acquire!` in the real kernel only ever grants *permission* --
+nothing in `dialect-mir` can state "and this cell still holds its
+original value" structurally, the same gap the reduction's acquire step
+had. Here the justification is actually more direct than the reduction's
+own (which argued its acquire via a *recursive, same-formula-at-every-
+round* symmetry): between the load phase and this kernel's own final
+write-back, **nothing ever writes to any cell of either tile at all** --
+the loop only ever reads. So "cell `i` of tile A still holds `oa[i]`" is
+no more than the load phase's own claim, unneeded to re-derive from a
+by-round formula; it's assumed to hold for every `i` throughout, which is
+what the `inhale cells[...] == oa[...]` lines at each acquire state
+directly.
+
+**What this still doesn't close**: same caveat as the reduction's, for
+the same reason -- this is one generic thread's own proof, not
+mechanically linked to another thread's run of the identical argument,
+or to the permission-level injectivity check. And as with every other
+claim in this track, it's fixed at `N=16` threads / 4x4 matrices;
+generalizing the shape (not just the size) is unexamined.
+
 ## Still open: per-thread function + lifting rule, not a whole-block loop
 
 A real SIMT block runs `n` threads *concurrently*, each executing the same

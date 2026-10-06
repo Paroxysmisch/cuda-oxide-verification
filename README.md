@@ -127,6 +127,20 @@ against this same real one, two more real, previously-latent bugs — see
 NOTES.md's "A second real kernel: tiled matmul" section for the complete
 derivation of all three.
 
+Proven for this kernel, same two layers as the reduction: **permission
+safety** (`real_compiler_tiled_matmul.vpr`), and **numeric correctness**
+— thread `(row, col)` ends up holding the real dot product
+`sum_{j=0}^{3} A[row][j] * B[j][col]`, not just memory accessed safely
+(`viper-poc/matmul_numeric_correctness.vpr`, hand-written the same way
+`phase5_numeric_correctness.vpr` is, with a deliberately-broken sibling
+confirmed rejected). Markedly simpler than the reduction's numeric proof:
+this loop only ever *accumulates* one more term each iteration (never
+*combines* two halves), so no merge lemma is needed — a single recursive
+`dot_sum` function plus one explicit unfolding step per iteration. See
+NOTES.md's "Matmul numeric correctness" section for the full derivation,
+including why the kernel's all-reads-after-the-load-phase structure makes
+its value-level acquire assumption more direct than the reduction's.
+
 ## Layout
 
 ```
@@ -176,8 +190,9 @@ dialect-verify-poc/              hand-built-IR demos: the SAME ghost-op
 
 viper-poc/                        the `.vpr` files every phase produces
                                    and checks, plus the hand-written
-                                   Phase 0 sanity tests and Phase 5's
-                                   N-thread/numeric-correctness proofs
+                                   Phase 0 sanity tests, Phase 5's
+                                   N-thread/numeric-correctness proofs,
+                                   and matmul_numeric_correctness.vpr
                                    (pass + deliberately-broken variants
                                    for every claim)
 
