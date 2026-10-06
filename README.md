@@ -141,6 +141,25 @@ NOTES.md's "Matmul numeric correctness" section for the full derivation,
 including why the kernel's all-reads-after-the-load-phase structure makes
 its value-level acquire assumption more direct than the reduction's.
 
+**Generalized to arbitrary N** (`viper-poc/matmul_numeric_correctness_arbitrary_n.vpr`
++ `_broken.vpr`): since this proof is hand-written (not derived from real
+compiler output), `n` is free to be a genuine symbolic parameter instead
+of a baked-in literal — unlike `real_compiler_tiled_matmul.vpr`, which
+stays fixed at N=4 forever, since a real compiled kernel's tile size is
+permanently baked in by monomorphization. The real difficulty:
+`row*n+k < n*n` is *nonlinear* (a product of two symbolic values), which
+Z3 doesn't discharge unprompted, and — found empirically, not assumed —
+separately-proved nonlinear facts don't always compose via a later
+`assert` the way equivalent linear facts do. The fix, `bound_holds`: an
+inductive function that *computes* `a*n+b` by repeated addition rather
+than ever re-deriving the product, carrying its own bound as a
+postcondition, so every index travels with its bound already attached —
+see NOTES.md's "Generalizing the matmul numeric proof to arbitrary N"
+section for the complete derivation, including the two dead ends hit
+first (chaining nonlinear asserts; quantified preconditions whose
+triggers didn't reach Viper's auto-generated termination proof) and why
+each failed.
+
 ## Layout
 
 ```
@@ -192,7 +211,9 @@ viper-poc/                        the `.vpr` files every phase produces
                                    and checks, plus the hand-written
                                    Phase 0 sanity tests, Phase 5's
                                    N-thread/numeric-correctness proofs,
-                                   and matmul_numeric_correctness.vpr
+                                   matmul_numeric_correctness.vpr (N=4),
+                                   and matmul_numeric_correctness_arbitrary_n.vpr
+                                   (symbolic N)
                                    (pass + deliberately-broken variants
                                    for every claim)
 

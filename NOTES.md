@@ -832,9 +832,87 @@ directly.
 **What this still doesn't close**: same caveat as the reduction's, for
 the same reason -- this is one generic thread's own proof, not
 mechanically linked to another thread's run of the identical argument,
-or to the permission-level injectivity check. And as with every other
-claim in this track, it's fixed at `N=16` threads / 4x4 matrices;
-generalizing the shape (not just the size) is unexamined.
+or to the permission-level injectivity check. Fixed at `N=16` threads /
+4x4 matrices when first written; generalized to arbitrary N below.
+
+## Generalizing the matmul numeric proof to arbitrary N
+
+`matmul_numeric_correctness.vpr` above is fixed at N=4 (16 threads).
+Generalizing it to a symbolic `n` is possible *because it's hand-written*
+-- unlike `real_compiler_tiled_matmul.vpr` (checked against the real
+compiled kernel's own translated output, where `n` is permanently baked
+in by monomorphization the moment `rustc` compiles `SharedArray<f32,
+16>`), nothing stops a hand-authored `.vpr` file from taking `n` as a
+genuine `Int` method parameter instead of a literal.
+`matmul_numeric_correctness_arbitrary_n.vpr` (+ `_broken.vpr`) does
+exactly that: same claim, same structure, `n` symbolic throughout,
+`requires n >= 1` the only constraint on its value.
+
+**The one genuinely hard part**: every shared-memory index in this
+kernel is `row*n+k` or `k*n+col` -- a product of two values neither of
+which is a constant anymore. `row < n`, `k < n` ==> `row*n+k < n*n` is
+*nonlinear* (Z3's decision procedures for integer arithmetic are
+complete for the linear fragment; nonlinear integer arithmetic has no
+complete decision procedure at all, only incomplete heuristics), and
+empirically, Z3 does not discharge it unprompted -- the direct attempt
+failed exactly where expected, with Silicon reporting `oa` indexed out
+of bounds inside `dot_sum`'s own well-formedness check.
+
+Getting a working proof took three real iterations, each surfacing a
+different real obstacle:
+
+1. **Chaining separately-proved nonlinear facts doesn't compose.**
+   `assert a*n <= (n-1)*n`, `assert (n-1)*n == n*n-n`, and `assert a*n <=
+   n*n-n` each verified **individually**, but a *later* assert combining
+   two already-proved facts (`a*n+n <= n*n` and `a*n+b < a*n+n`,
+   therefore `a*n+b < n*n` -- plain transitivity, confirmed separately to
+   hold for ordinary linear terms) **failed**. Z3's nonlinear arithmetic
+   handling appears not to carry two separately-established nonlinear
+   facts forward into a combined linear deduction reliably, even when
+   each fact alone is fine. Fixed by folding the whole claim into a
+   *single* inductive method (`bound_lemma`, proof by induction on `n-a`:
+   base case `a+1==n` where `(a+1)*n==n*n` is a trivial substitution,
+   step case `(a+1)*n == a*n+n` by distributivity) -- proving the target
+   fact directly, rather than composing two intermediate ones.
+
+2. **A method-based lemma can't help a function.** `bound_lemma` being a
+   `method` is fine for the loop body (method context, `assert` allowed)
+   but useless for `dot_sum`'s own well-formedness: Viper functions are
+   pure expressions, can't contain `assert` statements, and can only call
+   other *functions*, never methods. `dot_sum`'s recursive step still
+   needed `row*n+(k-1) < n*n` to even typecheck as a sequence index, with
+   no way to invoke a method to get it. Tried quantified preconditions
+   (`forall j :: 0<=j<n ==> row*n+j < n*n`) with explicit triggers on a
+   small wrapper function (arithmetic expressions aren't valid trigger
+   terms on their own) -- this got the function's *own* well-formedness
+   to verify, but not the problem below.
+3. **Viper auto-generates a separate termination proof per recursive
+   function, and it didn't inherit the same quantifier instantiation.**
+   `dot_sum`'s own body verified; the auto-generated
+   `dot_sum_termination_proof`/`dot_sum_pres_termination_proof` methods
+   (confirmed these exist and are separately checked by disabling
+   `decreases` entirely and watching Silicon accept an **obviously
+   non-terminating** function, `bad(n) = bad(n) + 1` -- a real check, not
+   a formality, so not something to route around) still failed on the
+   same quantifier-dependent facts. Fixed by converting `bound_lemma`
+   into a pure *function* (`bound_holds`, same inductive structure, Viper
+   functions do support `ensures` clauses) that **computes** `a*n+b` by
+   repeated addition/subtraction of `n` rather than ever re-deriving the
+   product, carrying its own bound as a postcondition
+   (`ensures result == a*n+b`, `ensures result < n*n`). `dot_sum` then
+   indexes via `oa[bound_holds(n, row, k-1)]` instead of
+   `oa[row*n+(k-1)]` directly -- the bound travels with the index
+   computation itself, needing no quantifier or trigger at all, and both
+   `bound_holds` and `dot_sum`'s own auto-generated termination proofs
+   verify cleanly.
+
+With both pieces in place, the full loop proof (same acquire/release
+value-assumption structure as the N=4 version, `row`/`col` now derived
+from a symbolic `tid \ n` / `tid % n` -- which Z3 bounds correctly from
+`tid < n*n` via its own division axioms, no lemma needed there at all)
+verifies, and the broken sibling (subtraction instead of addition) is
+rejected by the same invariant as before, confirming the nonlinear
+bounds machinery isn't accidentally papering over the value-level check.
 
 ## Still open: per-thread function + lifting rule, not a whole-block loop
 

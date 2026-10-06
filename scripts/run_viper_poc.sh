@@ -102,9 +102,19 @@ run_silicon_deep "$ROOT/viper-poc/matmul_numeric_correctness_broken.vpr"
 
 echo
 echo "=================================================================="
+echo " Matmul numeric correctness, arbitrary N (correct + broken)"
+echo "=================================================================="
+echo "--- correct, symbolic N: expect Verification successful ---"
+run_silicon_deep "$ROOT/viper-poc/matmul_numeric_correctness_arbitrary_n.vpr"
+echo "--- broken, symbolic N: expect invariant.not.preserved ---"
+run_silicon_deep "$ROOT/viper-poc/matmul_numeric_correctness_arbitrary_n_broken.vpr"
+
+echo
+echo "=================================================================="
 echo "Phase 0-5.2 POC complete. Phase 0's test file has one method"
 echo "(bad_non_injective_redistribution) that is SUPPOSED to fail; Phase 3's"
 echo "--broken run is ALSO supposed to fail; phase5_nthread_injectivity.vpr's"
-echo "second method, phase5_numeric_correctness_broken.vpr, and"
-echo "matmul_numeric_correctness_broken.vpr are ALSO supposed to fail --"
-echo "read NOTES.md, don't just check exit codes."
+echo "second method, phase5_numeric_correctness_broken.vpr,"
+echo "matmul_numeric_correctness_broken.vpr, and"
+echo "matmul_numeric_correctness_arbitrary_n_broken.vpr are ALSO supposed"
+echo "to fail -- read NOTES.md, don't just check exit codes."
