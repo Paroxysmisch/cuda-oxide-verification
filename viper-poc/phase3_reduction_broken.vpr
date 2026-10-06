@@ -16,13 +16,13 @@ method poc(cells: Seq[Ref], tid: Int)
   var v6: Bool := v1 <= v5
   var v7: Int := 1
   var v8: Bool := v1 >= v7
-  while (v8)
-    invariant v1 >= 0
-    invariant v1 <= 4
+  while ((v1 >= 1))
+    invariant (v1 >= 0)
+    invariant (v1 <= 4)
     invariant acc(cells[tid].val)
   {
     var v9: Bool := tid < v1
-    if (v9) {
+    if ((tid < v1)) {
       var v10: Int := tid + v1
       var v11: Int := 1
       var v12: Int := v10 + v11
@@ -34,10 +34,14 @@ method poc(cells: Seq[Ref], tid: Int)
       cells[tid].val := v17
       exhale acc(cells[v12].val)
       inhale true
+      var v18: Int := 2
+      var v19: Int := v1 \ v18
+      v1 := v19
+    } else {
+      var v18: Int := 2
+      var v19: Int := v1 \ v18
+      v1 := v19
     }
-    var v18: Int := 2
-    var v19: Int := v1 \ v18
-    v1 := v19
     // re-entering header (back edge): recompute its condition/invariants
     v3 := 0
     v4 := v1 >= v3

@@ -8,7 +8,7 @@ method poc(cells: Seq[Ref], tid: Int, bound: Int, claim: Bool)
 {
   assert claim
   var v1: Bool := tid < bound
-  if (v1) {
+  if ((tid < bound)) {
     cells[tid].val := tid
   } else {
     var v3: Int := 0

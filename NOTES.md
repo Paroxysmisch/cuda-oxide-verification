@@ -686,6 +686,107 @@ proof in one unified artifact. That linkage is exactly the same kind of
 "cited, not mechanized" step part 1 already named for CSL itself --
 consistent with this track's running theme, not a new, hidden gap.
 
+## A second real kernel: tiled matmul, and two translator bugs it exposed
+
+Everything above verifies one kernel (the stride-halving reduction). To
+show the real-compiler-closure architecture itself generalizes -- not
+just that it was tuned to fit one example -- a second, genuinely
+different real kernel was built the same way: `verify_tiled_matmul`
+(`cuda-rust/cuda-oxide/crates/rustc-codegen-cuda/examples/verify_tiled_matmul/`),
+a naive 4x4 tiled matrix multiply. 16 threads, two *separate* shared
+tiles (`TILE_A`, `TILE_B` -- the whole point of tiling: load each operand
+cooperatively once, reuse it for every thread's dot product), a single
+barrier, then a dot-product accumulation loop where each iteration
+borrows a *different* cell of each tile (not a fixed partner, as the
+reduction's acquire/release always used) via the same
+`verify_acquire!`/`verify_release!` pattern parameterized by the loop
+variable `k`. `scripts/run_matmul_poc.sh` builds it (and a deliberately
+broken sibling, `verify_tiled_matmul_broken`, with an off-by-one into the
+B tile) end to end, the same way `run_real_compiler_poc.sh` does for the
+reduction; see `viper-poc/real_compiler_tiled_matmul.vpr` / `_broken.vpr`
+for what the real translator actually produced, wrapped.
+
+**The translator change this needed**: every op in `translate.rs` that
+renders a shared-memory access hardcoded the literal name `cells` -- fine
+when there's exactly one tile, wrong the moment there are two (`TILE_B`'s
+cells would silently alias into the same Viper sequence as `TILE_A`'s).
+Fixed by naming tiles by order of first appearance (`tile_values` is now
+`HashMap<Value, String>`, not `HashSet<Value>`; `tile_index` carries
+`(tile_name, idx)` pairs, not just `idx`) -- the first tile keeps the name
+every existing single-tile demo already assumes (`cells`), so nothing
+built before this needed to change; a second tile gets `cells2`, a third
+`cells3`, and so on. Confirmed via the full regression suite
+(`run_viper_poc.sh`, `run_real_compiler_poc.sh`) before and after: zero
+behavior change for every existing single-tile kernel.
+
+**Two real bugs this new kernel's shape exposed in the translator
+itself** (not kernel-specific workarounds -- both are in `translate.rs`,
+fixed once, benefiting every kernel):
+
+1. **The `while` condition was a bare, havocked variable, unrelated to the
+   loop variable.** The reduction's own bound check (`tid + stride < 8`)
+   never actually depended on the loop's *condition* being known inside
+   the body -- only on `stride`'s own invariant. The matmul kernel's
+   bound check (`row * 4 + k < 16`) genuinely needs `k < 4` (the loop
+   condition itself, strict), not just the invariant's `k <= 4` (which
+   permits `k == 4`, one past the end). Silicon only assumes the loop's
+   *declared invariants* when checking the body, not whatever opaque
+   boolean variable happens to sit in the `while (...)` header text --
+   and that variable is itself havocked at the loop boundary like any
+   other body-written local, carrying no relationship back to `k` unless
+   the condition text *says so directly*. Fixed by inlining the condition
+   (via the same `atom()` mechanism already used for invariants) instead
+   of using the bare SSA name -- found and fixed together with a related,
+   previously-latent bug: `mir.not`'s and the arithmetic/comparison ops'
+   own inlined text wasn't parenthesized (`!a_atom` renders wrong when
+   `a_atom` is itself `a < b`), invisible until something actually nested
+   an inlined condition inside a `!`.
+
+2. **Cleaning up `dialect-verify-poc` surfaced two more, deeper bugs.**
+   That crate had its own, separately-maintained copy of `ghost_ops.rs`/
+   `translate.rs` (predating the real `dialect-verify` crate inside the
+   `cuda-rust` submodule, back when the real crate didn't exist yet) --
+   frozen at an earlier, less-debugged state, silently diverging from
+   every fix made to the real crate since. Deduplicated by pointing
+   `dialect-verify-poc` at the real crate instead (one `Cargo.toml` path
+   dependency, four one-line import changes, two now-redundant files
+   deleted) -- and running the existing Phase 0-5 regression suite
+   against the *real* translator for the first time immediately exposed:
+   - **A loop variable initialized to a literal constant right before the
+     loop got that constant baked into the `while` condition and every
+     invariant, verbatim** -- `while (4 >= 1)` and `invariant (4 <= 4)`
+     instead of `while (stride >= 1)` / `invariant (stride <= 4)`. Not
+     just imprecise: a tautology. `!(4 >= 1)` is a contradiction, making
+     the post-loop continuation's assumed state unreachable and any
+     `ensures` clause trivially "proven" regardless of its content --
+     Phase 3's own correct run still said "Verification successful" with
+     this bug present, for the wrong reason. It never showed up on
+     `verify_demo`/`verify_tiled_matmul` because those go through
+     `translate_function_body_from_first_verify_op`, which already clears
+     this exact tracking (`alloca_expr_text`) for an unrelated reason (a
+     real compiled kernel's discarded prefix). Hand-built IR calling the
+     plain `translate_function_body` entry point has no such prefix to
+     discard, so nothing ever cleared it. Fixed by clearing
+     `alloca_expr_text`/`expr_text` at every loop header's first visit
+     (`is_loop_header`, already existed for a different purpose), not
+     just once at the start of the whole function.
+   - **`translate_function_body` (the plain entry point) never prepended
+     `alloca_prelude` at all** -- every `mir.alloca`'d local's own `var`
+     declaration was silently missing from the output the moment the
+     kernel had one, a parse-level error, not a verification failure.
+     Present since the day `alloca_prelude` was introduced (for the
+     *other* entry point's needs) but never caught, because nothing had
+     called the plain entry point against the real crate until this
+     cleanup. One-line fix: prepend it, matching the sibling entry
+     point's own behavior.
+
+   Both bugs are fixed now and confirmed against the full regression
+   suite (every phase, every deliberately-broken variant, both real
+   compiler closures) -- but they're a concrete illustration of exactly
+   why the duplication was worth removing: two copies of the same logic,
+   maintained separately, drift, and the drift is invisible until
+   something forces both copies to run against the same input.
+
 ## Still open: per-thread function + lifting rule, not a whole-block loop
 
 A real SIMT block runs `n` threads *concurrently*, each executing the same

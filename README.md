@@ -40,6 +40,9 @@ scripts/run_real_compiler_poc.sh   # the real closure: an actual verify_*!-
                                # annotated kernel, compiled by the real
                                # rustc/mir-importer, through the real
                                # translator, checked by Silicon
+scripts/run_matmul_poc.sh     # a second, different real kernel through the
+                               # same closure -- a tiled matmul, two shared
+                               # tiles, no special hardware features
 ```
 
 Last run: every phase behaves as documented — real passes verify, every
@@ -92,6 +95,38 @@ N-thread and numeric-correctness proofs aren't yet mechanically linked to
 each other in one unified artifact; both cite the same kind of
 by-symmetry argument CSL's parallel rule itself is cited, not re-derived).
 
+### A second kernel: tiled matmul
+
+A second, genuinely different real kernel
+(`cuda-rust/cuda-oxide/crates/rustc-codegen-cuda/examples/verify_tiled_matmul/src/main.rs`)
+goes through the identical closure — a naive 4x4 tiled matrix multiply,
+no WGMMA/tensor-core features, **two** distinct shared tiles instead of
+one, and a dot-product loop that borrows a different cell of each tile
+every iteration:
+
+```rust
+verify_invariant!(k <= 4);
+verify_invariant!(k >= 0);
+verify_invariant!(row < 4);
+verify_invariant!(col < 4);
+verify_perm!(core::ptr::addr_of!(TILE_A[tid]));
+verify_perm!(core::ptr::addr_of!(TILE_B[tid]));
+
+verify_acquire!(core::ptr::addr_of!(TILE_A[row * 4 + k]));
+verify_acquire!(core::ptr::addr_of!(TILE_B[k * 4 + col]));
+acc = acc + TILE_A[row * 4 + k] * TILE_B[k * 4 + col];
+verify_release!(core::ptr::addr_of!(TILE_A[row * 4 + k]));
+verify_release!(core::ptr::addr_of!(TILE_B[k * 4 + col]));
+```
+
+Run it with `scripts/run_matmul_poc.sh`. Building this exposed one real
+translator gap (every shared-memory access hardcoded the literal tile
+name `cells`, fine for one tile, wrong for two) and, via a cleanup pass
+that deduplicated `dialect-verify-poc`'s own stale copy of the translator
+against this same real one, two more real, previously-latent bugs — see
+NOTES.md's "A second real kernel: tiled matmul" section for the complete
+derivation of all three.
+
 ## Layout
 
 ```
@@ -113,12 +148,19 @@ cuda-rust/                        the submodule (NVIDIA/cuda-rust) -- a
                                    dialect-mir verification
   .../examples/verify_demo/       the real, compiling example kernel
   .../examples/verify_demo_broken/    same kernel, one deliberate bug
+  .../examples/verify_tiled_matmul/   a second, different real kernel:
+                                   tiled matmul, two shared tiles
+  .../examples/verify_tiled_matmul_broken/  same kernel, one deliberate bug
 
-dialect-verify-poc/              standalone POC crate: the SAME ghost-op
-                                   mechanism and translator, built against
-                                   hand-constructed dialect-mir (via
-                                   pliron directly) rather than real
-                                   compiler output -- phase1-4 binaries,
+dialect-verify-poc/              hand-built-IR demos: the SAME ghost-op
+                                   mechanism and translator (a path
+                                   dependency on the real dialect-verify
+                                   crate above, not its own copy -- see
+                                   NOTES.md), run against hand-constructed
+                                   dialect-mir (via pliron directly)
+                                   rather than real compiler output, so a
+                                   quick, dependency-light way to probe
+                                   the translator -- phase1-4 binaries,
                                    each runnable and self-explanatory
   src/bin/phase1_erasure.rs         ghost op coexists with a real op,
                                    erasure removes only the ghost one
@@ -143,6 +185,9 @@ scripts/
   install_viper.sh                 downloads Viper/Silicon
   run_viper_poc.sh                  Phases 0-5, hand-built IR
   run_real_compiler_poc.sh          the real rustc/mir-importer closure
+                                   (block-sum reduction)
+  run_matmul_poc.sh                 the same closure, a second kernel
+                                   (tiled matmul, two shared tiles)
   install_verus.sh / run_proof.sh   track 2 (Verus), below
 
 verus-proof/, kernel/, verify-proto/, docs/

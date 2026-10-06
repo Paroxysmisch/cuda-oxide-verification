@@ -32,7 +32,7 @@
 //! scoped down to what this one thread's proof actually needs.
 
 use dialect_mir::{ops::MirFuncOp, types::MirPtrType};
-use dialect_verify_poc::{ghost_ops, translate::Translator};
+use dialect_verify::{self as ghost_ops, translate::Translator};
 use pliron::{
     basic_block::BasicBlock,
     builtin::{

@@ -1,0 +1,186 @@
+field val: Int
+
+method tiled_matmul_4x4(cells: Seq[Ref], cells2: Seq[Ref], tid_param: Int)
+  requires |cells| == 16
+  requires |cells2| == 16
+  requires forall i: Int, j: Int :: 0 <= i && i < 16 && 0 <= j && j < 16 && i != j ==> cells[i] != cells[j]
+  requires forall i: Int, j: Int :: 0 <= i && i < 16 && 0 <= j && j < 16 && i != j ==> cells2[i] != cells2[j]
+  requires forall i: Int, j: Int :: 0 <= i && i < 16 && 0 <= j && j < 16 ==> cells[i] != cells2[j]
+  requires 0 <= tid_param && tid_param < 16
+  requires acc(cells[tid_param].val)
+  requires acc(cells2[tid_param].val)
+  ensures acc(cells[tid_param].val)
+  ensures acc(cells2[tid_param].val)
+{
+  var v0: Int
+  var v1: Int
+  var v2: Int
+  var v3: Int
+  var v4: Int
+  var v5: Int
+  var v6: Int
+  var v7: Int
+  var v8: Bool
+  var v9: Int
+  var v10: Int
+  var v11: Int
+  var v12: Int
+  var v13: Int
+  var v14: Bool
+  var v15: Int
+  var v16: Int
+  var v17: Int
+  var v18: Int
+  var v19: Int
+  var v20: Bool
+  var v21: Int
+  var v22: Bool
+  var v23: Int
+  var v24: Bool
+  var v25: Int
+  var v26: Bool
+  var v27: Bool
+  var v28: Int
+  var v29: Int
+  var v30: Int
+  var v31: Int
+  var v32: Int
+  var v33: Int
+  var v34: Int
+  var v35: Int
+  var v36: Int
+  var v37: Int
+  var v38: Int
+  var v39: Int
+  var v40: Int
+  var v41: Int
+  var v42: Int
+  var v43: Int
+  var v44: Int
+  var v45: Int
+  var v46: Int
+  var v47: Int
+  var v48: Int
+  var v49: Int
+  var v50: Int
+  var v51: Int
+  var v52: Int
+  var v53: Int
+  var v54: Int
+  var v55: Int
+  var v56: Int
+  var v57: Int
+  var v58: Int
+  var v59: Int
+  var v60: Int
+  var v61: Int
+  var v62: Int
+  var v63: Int
+  var v64: Int
+  var v65: Int
+  var v66: Int
+  var v67: Int
+  var v68: Int
+  var v69: Int
+  var v70: Int
+  var v71: Int
+  v2 := tid_param  // tid's alloca slot, bridged from the method parameter
+  v4 := tid_param \ 4  // row := tid / 4, in the skipped prefix
+  v5 := tid_param % 4  // col := tid % 4, in the skipped prefix
+  v19 := 0  // k's alloca slot: `let mut k = 0usize;` in the skipped prefix
+  v21 := v19
+  var v100: Int := 4
+  var v101: Bool := v21 < v100
+  v20 := v101
+  var v102: Bool := !v20
+  while (!(!(v19 < 4)))
+    invariant (v19 <= 4)
+    invariant (v19 >= 0)
+    invariant (v4 < 4)
+    invariant (v5 < 4)
+    invariant acc(cells[v2].val)
+    invariant acc(cells2[v2].val)
+  {
+    v23 := v19
+    var v103: Int := 4
+    var v104: Bool := v23 <= v103
+    v22 := v104
+    var v105: Int
+    v25 := v19
+    var v106: Int := 0
+    var v107: Bool := v25 >= v106
+    v24 := v107
+    var v108: Int
+    var v109: Int := 4
+    var v110: Bool := v4 < v109
+    v26 := v110
+    var v111: Int
+    var v112: Int := 4
+    var v113: Bool := v5 < v112
+    v27 := v113
+    var v114: Int
+    var v120: Int
+    var v126: Int
+    var v128: Int := 4
+    var v129: Int := v4 * v128
+    v38 := v129
+    v39 := v19
+    var v130: Int := v38 + v39
+    v37 := v130
+    exhale true
+    inhale acc(cells[v37].val)
+    var v135: Int
+    v45 := v19
+    var v137: Int := 4
+    var v138: Int := v45 * v137
+    v44 := v138
+    var v139: Int := v44 + v5
+    v43 := v139
+    exhale true
+    inhale acc(cells2[v43].val)
+    var v144: Int
+    v46 := v18
+    v52 := v19
+    var v146: Int := v38 + v52
+    v51 := v146
+    var v150: Int := cells[v51].val
+    v48 := v150
+    v58 := v19
+    var v152: Int := 4
+    var v153: Int := v58 * v152
+    v57 := v153
+    var v154: Int := v57 + v5
+    v56 := v154
+    var v158: Int := cells2[v56].val
+    v53 := v158
+    var v159: Int := v48 * v53
+    v47 := v159
+    var v160: Int := v46 + v47
+    v18 := v160
+    v63 := v19
+    var v162: Int := v38 + v63
+    v62 := v162
+    exhale acc(cells[v62].val)
+    inhale true
+    var v167: Int
+    v69 := v19
+    var v169: Int := 4
+    var v170: Int := v69 * v169
+    v68 := v170
+    var v171: Int := v68 + v5
+    v67 := v171
+    exhale acc(cells2[v67].val)
+    inhale true
+    var v176: Int
+    var v177: Int := 1
+    var v178: Int := v19 + v177
+    v19 := v178
+    // re-entering header (back edge): recompute its condition/invariants
+    v21 := v19
+    v100 := 4
+    v101 := v21 < v100
+    v20 := v101
+    v102 := !v20
+  }
+  cells[v2].val := v18
+}

@@ -153,10 +153,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dialect-verify"
+version = "0.1.0"
+dependencies = [
+ "dialect-mir",
+ "pliron",
+ "pliron-derive",
+]
+
+[[package]]
 name = "dialect-verify-poc"
 version = "0.1.0"
 dependencies = [
  "dialect-mir",
+ "dialect-verify",
  "pliron",
  "pliron-derive",
 ]

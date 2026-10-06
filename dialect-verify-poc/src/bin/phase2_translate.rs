@@ -2,7 +2,7 @@
 //! and real shared-memory stores through `mir.shared_alloc` +
 //! `mir.ptr_offset` + `mir.store` -- the same op sequence Phase 0's Explore
 //! agent traced for `TILE[tid] = v` -- then run it through the REAL
-//! translator (`dialect_verify_poc::translate`), not hand-written Viper,
+//! translator (`dialect_verify::translate`), not hand-written Viper,
 //! and check the result with Silicon.
 //!
 //! Kernel being modeled:
@@ -23,7 +23,7 @@
 //! like Phase 0.
 
 use dialect_mir::{ops::MirFuncOp, types::MirPtrType};
-use dialect_verify_poc::{ghost_ops, translate::Translator};
+use dialect_verify::{self as ghost_ops, translate::Translator};
 use pliron::{
     basic_block::BasicBlock,
     builtin::{

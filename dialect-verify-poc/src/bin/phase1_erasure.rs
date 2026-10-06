@@ -20,7 +20,7 @@ use dialect_mir::{
     ops::{MirFuncOp, MirReturnOp, MirStoreOp},
     types::MirPtrType,
 };
-use dialect_verify_poc::ghost_ops::{self, VerifyAssertOp};
+use dialect_verify::{self as ghost_ops, VerifyAssertOp};
 use pliron::{
     basic_block::BasicBlock,
     builtin::{

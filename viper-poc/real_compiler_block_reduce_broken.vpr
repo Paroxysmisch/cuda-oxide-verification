@@ -56,8 +56,8 @@ method real_compiler_block_reduce_broken(cells: Seq[Ref], tid_param: Int)
   var v55: Bool := v11 >= v54
   v10 := v55
   var v56: Bool := !v10
-  while (!v56)
-    invariant v9 <= 4
+  while (!(!(v9 >= 1)))
+    invariant (v9 <= 4)
     invariant acc(cells[v1].val)
   {
     v13 := v9
@@ -70,7 +70,7 @@ method real_compiler_block_reduce_broken(cells: Seq[Ref], tid_param: Int)
     var v66: Bool := v1 < v18
     v17 := v66
     var v67: Bool := !v17
-    if (v67) {
+    if ((!(v1 < v9))) {
       var v68: Int := 2
       var v69: Int := v9 \ v68
       v9 := v69
